@@ -1,49 +1,91 @@
-/**
- * src/components/EnvironmentalAlarms.jsx
- * ----------------------------------------------------------------------------
- * Read-only presentation strip showing gas/flame/water alarm state plus
- * the current temperature, light, and occupancy readings — lets the
- * audience see sensor values change live as the workbench is driven.
- * ========================================================================== */
 import React from "react";
-import { Wind, Flame, Droplets, ShieldAlert } from "lucide-react";
-import { Panel } from "./ui/Primitives.jsx";
+import { Card, Badge } from "./ui/Primitives";
 
-function AlarmChip({ active, label, Icon }) {
-  return (
-    <div
-      className={`flex items-center gap-2 rounded-md border px-3 py-2 text-xs font-medium ${
-        active ? "border-red-500/40 bg-red-500/10 text-red-300" : "border-slate-800 bg-slate-950 text-slate-500"
-      }`}
-    >
-      <Icon className="h-3.5 w-3.5" />
-      {label}: {active ? "Detected" : "Safe"}
-    </div>
-  );
-}
+export default function EnvironmentalAlarms({ telemetry }) {
+  const { motion, light, led } = telemetry;
 
-export default function EnvironmentalAlarms({ sensors }) {
+  // Normalize light value (supports both 0-100% or 0-4095 12-bit STM32 ADC)
+  const maxScale = light > 100 ? 4095 : 100;
+  const lightPercent = Math.min(100, Math.round((light / maxScale) * 100));
+  const isDark = lightPercent < 35;
+
   return (
-    <Panel title="Environmental alarms" icon={<ShieldAlert className="h-4 w-4 text-slate-400" />}>
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <AlarmChip active={sensors.gasLeak} label="Gas / smoke" Icon={Wind} />
-        <AlarmChip active={sensors.flame} label="Flame" Icon={Flame} />
-        <AlarmChip active={sensors.waterLeak} label="Water leak" Icon={Droplets} />
+    <Card className="flex flex-col justify-between gap-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-white">
+            STM32 Sensor Telemetry
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Real-time UART stream via ESP32-C3 Super Mini
+          </p>
+        </div>
+        <Badge variant={motion ? "warning" : "neutral"}>
+          {motion ? "Occupied" : "Clear"}
+        </Badge>
       </div>
-      <div className="mt-4 space-y-2 border-t border-slate-800 pt-4 text-xs text-slate-500">
-        <div className="flex items-center justify-between">
-          <span>Ambient temperature</span>
-          <span className="font-mono text-slate-300">{sensors.tempC}°C</span>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* PIR Motion Status */}
+        <div
+          className={`p-4 rounded-xl border transition-all ${
+            motion
+              ? "bg-emerald-500/10 border-emerald-500/40"
+              : "bg-slate-950/60 border-slate-800"
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-slate-400">
+              PIR Motion Sensor
+            </span>
+            <span
+              className={`w-2.5 h-2.5 rounded-full ${
+                motion ? "bg-emerald-400 animate-ping" : "bg-slate-600"
+              }`}
+            />
+          </div>
+          <div className="text-xl font-bold text-white">
+            {motion ? "Motion Detected" : "No Motion"}
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Node: <code className="text-indigo-400">/sensor/motion</code>
+          </p>
         </div>
-        <div className="flex items-center justify-between">
-          <span>Ambient light</span>
-          <span className="font-mono text-slate-300">{sensors.lux} lux</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span>Occupancy (PIR)</span>
-          <span className="font-mono text-slate-300">{sensors.pir ? "Motion" : "Idle"}</span>
+
+        {/* LDR Ambient Light Status */}
+        <div className="p-4 rounded-xl bg-slate-950/60 border border-slate-800">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-medium text-slate-400">
+              Ambient Light (LDR)
+            </span>
+            <Badge variant={isDark ? "warning" : "info"}>
+              {isDark ? "Low Light" : "Bright"}
+            </Badge>
+          </div>
+          <div className="flex items-baseline justify-between">
+            <span className="text-xl font-bold text-white">{light}</span>
+            <span className="text-xs text-slate-400">{lightPercent}%</span>
+          </div>
+          <div className="w-full h-2 bg-slate-800 rounded-full overflow-hidden mt-2">
+            <div
+              className="h-full bg-indigo-500 transition-all duration-300"
+              style={{ width: `${lightPercent}%` }}
+            />
+          </div>
         </div>
       </div>
-    </Panel>
+
+      {/* Context Inference Summary Banner */}
+      <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800/80 flex items-center justify-between gap-3 text-xs">
+        <span className="text-slate-400">Context Evaluation:</span>
+        <span className="text-slate-200 font-medium text-right">
+          {motion && isDark
+            ? "Room occupied in low light → Auto LED ON recommended"
+            : !motion && led
+            ? "No occupancy detected with LED ON → Energy saving recommended"
+            : "Environment optimal"}
+        </span>
+      </div>
+    </Card>
   );
 }

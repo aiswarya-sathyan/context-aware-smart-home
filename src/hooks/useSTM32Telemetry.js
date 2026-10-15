@@ -1,110 +1,101 @@
-/**
- * src/hooks/useSTM32Telemetry.js
- * ----------------------------------------------------------------------------
- * Single source of truth for all sensor + actuator state.
- *
- * FUTURE HARDWARE HANDOFF
- * This is the ONLY file that needs to change when the real STM32 + ESP8266
- * hardware comes online. Replace the internal useState/setters with a
- * WebSocket subscription, e.g.:
- *
- *   useEffect(() => {
- *     const ws = new WebSocket("ws://<esp8266-ip>/telemetry");
- *     ws.onmessage = (evt) => setSensors(JSON.parse(evt.data));
- *     return () => ws.close();
- *   }, []);
- *
- * or a polling fetch("http://<esp8266-ip>/api/sensors"). Keep the exact
- * same return shape — { sensors, automation, appliances, fallEvent,
- * alertAcknowledged, occupantStatus, actions } — documented in
- * src/types/telemetry.ts, and every consuming component keeps working
- * unchanged.
- * ========================================================================== */
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { db, ref, onValue, update, set } from "../firebase";
 
-/** @returns {import("../types/telemetry").TelemetryContextValue} */
 export function useSTM32Telemetry() {
-  const [sensors, setSensors] = useState({
-    pir: false, // occupancy: true = motion detected
-    lux: 420, // LDR ambient light, 0-1000
-    tempC: 26, // DHT ambient temperature, 15-45
-    gasLeak: false, // MQ-2 gas/smoke
-    flame: false, // IR flame sensor
-    waterLeak: false, // water leakage probe
+  const [telemetry, setTelemetry] = useState({
+    motion: false,
+    light: 0,
+    led: false,
+    mode: "AUTO",
   });
+  const [connected, setConnected] = useState(false);
+  const [lastSync, setLastSync] = useState(null);
 
-  const [fallEvent, setFallEvent] = useState(null); // { timestamp, lat, lng } | null
-  const [alertAcknowledged, setAlertAcknowledged] = useState(false);
+  // 1. Real-time Firebase Listener
+  useEffect(() => {
+    const sensorRef = ref(db, "sensor");
+    console.log("[RTDB] Subscribing to 'sensor' path...");
 
-  // Manual overrides the caretaker can toggle when automation isn't forcing a state
-  const [manual, setManual] = useState({ light: false, fan: false });
+    const unsubscribe = onValue(
+      sensorRef,
+      (snapshot) => {
+        setConnected(true);
+        setLastSync(new Date().toLocaleTimeString());
+        
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          console.log("[RTDB Stream Received]", data);
+          setTelemetry({
+            motion: Boolean(data.motion),
+            light: Number(data.light ?? 0),
+            led: Boolean(data.led),
+            mode: data.mode || "MANUAL",
+          });
+        } else {
+          console.warn("[RTDB] '/sensor' node does not exist yet. Initializing...");
+          // Initialize empty node
+          set(sensorRef, {
+            motion: false,
+            light: 0,
+            led: false,
+            mode: "MANUAL",
+          });
+        }
+      },
+      (error) => {
+        console.error("[RTDB Error]", error);
+        setConnected(false);
+      }
+    );
 
-  const set = (key) => (value) => setSensors((s) => ({ ...s, [key]: value }));
+    return () => unsubscribe();
+  }, []);
 
-  const triggerFall = () => {
-    setFallEvent({
-      timestamp: new Date(),
-      lat: (12.9716 + (Math.random() - 0.5) * 0.002).toFixed(6),
-      lng: (77.5946 + (Math.random() - 0.5) * 0.002).toFixed(6),
-    });
-    setAlertAcknowledged(false);
-  };
+  // 2. Control LED
+  const setLedState = useCallback(async (newState) => {
+    console.log("[Action] Toggling LED to:", newState);
+    try {
+      const sensorRef = ref(db, "sensor");
+      await update(sensorRef, {
+        led: Boolean(newState),
+        mode: "MANUAL",
+      });
+      console.log("[Action] Firebase update succeeded!");
+    } catch (err) {
+      console.error("[Action] Failed to update LED:", err);
+    }
+  }, []);
 
-  const acknowledgeAlert = () => setAlertAcknowledged(true);
-  const clearSiren = () => {
-    setFallEvent(null);
-    setAlertAcknowledged(false);
-  };
+  // 3. Control Mode
+  const setControlMode = useCallback(async (newMode) => {
+    console.log("[Action] Setting Mode to:", newMode);
+    try {
+      const sensorRef = ref(db, "sensor");
+      await update(sensorRef, {
+        mode: newMode,
+      });
+      console.log("[Action] Mode updated successfully!");
+    } catch (err) {
+      console.error("[Action] Failed to update Mode:", err);
+    }
+  }, []);
 
-  // Context-aware automation rules — the "brain" the STM32 firmware will run
-  const automation = useMemo(() => {
-    const fanForced = sensors.tempC > 30;
-    const lightAuto = sensors.pir && sensors.lux < 200;
-    const exhaustForced = sensors.gasLeak || sensors.flame;
-    const pumpShutoff = sensors.waterLeak;
-    return { fanForced, lightAuto, exhaustForced, pumpShutoff };
-  }, [sensors]);
-
-  const appliances = useMemo(
-    () => ({
-      light: { on: manual.light || automation.lightAuto, auto: automation.lightAuto },
-      fan: { on: manual.fan || automation.fanForced, auto: automation.fanForced },
-      exhaust: { on: automation.exhaustForced, auto: automation.exhaustForced },
-      pump: { on: !automation.pumpShutoff, auto: automation.pumpShutoff },
-    }),
-    [manual, automation]
-  );
-
-  const occupantStatus = fallEvent
-    ? alertAcknowledged
-      ? "ACKNOWLEDGED"
-      : "CRITICAL"
-    : sensors.pir
-    ? "MOVEMENT"
-    : "NORMAL";
-
-  const setManualLight = (v) => setManual((m) => ({ ...m, light: v }));
-  const setManualFan = (v) => setManual((m) => ({ ...m, fan: v }));
+  // 4. Inject Simulated Telemetry
+  const injectSimulatedTelemetry = useCallback(async (payload) => {
+    try {
+      const sensorRef = ref(db, "sensor");
+      await update(sensorRef, payload);
+    } catch (err) {
+      console.error("[Simulator] Injection failed:", err);
+    }
+  }, []);
 
   return {
-    sensors,
-    automation,
-    appliances,
-    fallEvent,
-    alertAcknowledged,
-    occupantStatus,
-    actions: {
-      setPir: set("pir"),
-      setLux: set("lux"),
-      setTempC: set("tempC"),
-      setGasLeak: set("gasLeak"),
-      setFlame: set("flame"),
-      setWaterLeak: set("waterLeak"),
-      setManualLight,
-      setManualFan,
-      triggerFall,
-      acknowledgeAlert,
-      clearSiren,
-    },
+    telemetry,
+    connected,
+    lastSync,
+    setLedState,
+    setControlMode,
+    injectSimulatedTelemetry,
   };
 }
