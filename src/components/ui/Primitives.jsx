@@ -1,42 +1,83 @@
-/**
- * src/components/ui/Primitives.jsx
- * ----------------------------------------------------------------------------
- * Small, shared visual atoms used across the dashboard: a status LED dot,
- * an amber "automation is driving this" badge, and the bordered Panel
- * wrapper used by every card. Kept separate so each feature module stays
- * focused on its own logic rather than repeating layout chrome.
- * ========================================================================== */
 import React from "react";
 
-export function LedDot({ color }) {
+export function Card({ children, className = "" }) {
   return (
-    <span
-      className="inline-block h-2 w-2 rounded-full"
-      style={{ backgroundColor: color, boxShadow: `0 0 6px ${color}` }}
-    />
+    <div
+      className={`bg-slate-900/80 border border-slate-800/80 rounded-2xl p-4 sm:p-6 shadow-xl backdrop-blur-md transition-all ${className}`}
+    >
+      {children}
+    </div>
   );
 }
 
-export function AutoBadge({ children }) {
+export function Badge({ children, variant = "neutral" }) {
+  const styles = {
+    success: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+    warning: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+    danger: "bg-rose-500/15 text-rose-400 border-rose-500/30",
+    info: "bg-sky-500/15 text-sky-400 border-sky-500/30",
+    neutral: "bg-slate-800 text-slate-300 border-slate-700",
+  };
+
   return (
-    <span className="inline-flex items-center gap-1 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
+    <span
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${
+        styles[variant] || styles.neutral
+      }`}
+    >
       {children}
     </span>
   );
 }
 
-export function Panel({ title, icon, children, className = "", tone = "default" }) {
-  const toneRing =
-    tone === "critical" ? "border-red-500/40" : tone === "warn" ? "border-amber-500/30" : "border-slate-800";
+export function ActionButton({
+  children,
+  onClick,
+  active = false,
+  variant = "primary",
+  disabled = false,
+  className = "",
+}) {
+  const base =
+    "px-4 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]";
+
+  const variants = {
+    primary: active
+      ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border border-indigo-500"
+      : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700",
+    danger:
+      "bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30",
+    ghost:
+      "bg-transparent hover:bg-slate-800/60 text-slate-400 hover:text-slate-200",
+  };
+
   return (
-    <section className={`rounded-lg border ${toneRing} bg-slate-900/60 ${className}`}>
-      {title && (
-        <div className="flex items-center gap-2 border-b border-slate-800 px-4 py-3">
-          {icon}
-          <h2 className="text-sm font-semibold tracking-wide text-slate-200">{title}</h2>
-        </div>
-      )}
-      <div className="p-4">{children}</div>
-    </section>
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`${base} ${variants[variant]} ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function LedDot({ active = false, size = "md" }) {
+  const sizes = {
+    sm: "w-2 h-2",
+    md: "w-3 h-3",
+    lg: "w-4 h-4",
+  };
+
+  return (
+    <span
+      className={`rounded-full transition-all duration-300 inline-block ${
+        sizes[size] || sizes.md
+      } ${
+        active
+          ? "bg-emerald-400 shadow-[0_0_8px_#34d399]"
+          : "bg-slate-700 border border-slate-600"
+      }`}
+    />
   );
 }

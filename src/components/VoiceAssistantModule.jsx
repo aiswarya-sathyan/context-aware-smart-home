@@ -1,232 +1,268 @@
-/**
- * src/components/VoiceAssistantModule.jsx
- * ----------------------------------------------------------------------------
- * Live Laptop Microphone Voice Command Module & AI Assistant.
- * Uses Web Speech API (SpeechRecognition) for real voice input.
- * Integrates directly with telemetry.actions to toggle lights & fans.
- * ========================================================================== */
-import React, { useState, useEffect } from "react";
-import { Mic, MicOff, Music, CloudSun, Sparkles, Play, Pause, SkipForward } from "lucide-react";
-import { Panel } from "./ui/Primitives.jsx";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Card, Badge, ActionButton } from "./ui/Primitives";
 
-export default function VoiceAssistantModule({ telemetry }) {
+export default function VoiceAssistantModule({
+  telemetry,
+  onSetLed,
+  onSetMode,
+}) {
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('Click "Start Voice Input" and speak into your mic...');
-  const [assistantResponse, setAssistantResponse] = useState("AI Voice Assistant ready for spoken commands.");
-  const [recognitionInstance, setRecognitionInstance] = useState(null);
+  const [continuousMode, setContinuousMode] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [assistantReply, setAssistantReply] = useState(
+    "Tap the microphone or say 'Turn on the light' or 'Status report'."
+  );
+  const [commandHistory, setCommandHistory] = useState([]);
+  const [supported, setSupported] = useState(true);
 
-  // Media Player State
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTrack, setCurrentTrack] = useState("Calm Ambient Focus");
+  const recognitionRef = useRef(null);
+  const telemetryRef = useRef(telemetry);
 
-  // Weather AI Logic based on telemetry
-  const temp = telemetry?.sensors?.temperature ?? 26;
-  const humidity = telemetry?.sensors?.humidity ?? 55;
-
-  const predictWeather = (t, h) => {
-    if (t > 30 && h > 70) return { forecast: "High Rain/Thunderstorm Probability", action: "Recommend securing outdoor sensors." };
-    if (t > 28 && h <= 50) return { forecast: "Clear & Warm", action: "HVAC automation active." };
-    if (t < 20) return { forecast: "Cool Microclimate", action: "Thermal regulation suggested." };
-    return { forecast: "Nominal Indoor Microclimate", action: "Environmental indicators stable." };
-  };
-
-  const weatherAI = predictWeather(temp, humidity);
-
-  // Initialize Web Speech API (SpeechRecognition)
   useEffect(() => {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = "en-US";
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setTranscript("Listening to laptop microphone...");
-      };
-
-      recognition.onresult = (event) => {
-        const spokenText = event.results[0][0].transcript;
-        setTranscript(`"${spokenText}"`);
-        processVoiceCommand(spokenText);
-      };
-
-      recognition.onerror = (event) => {
-        setIsListening(false);
-        setTranscript(`Error: ${event.error || "Microphone access blocked/unavailable."}`);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      setRecognitionInstance(recognition);
-    } else {
-      setTranscript("Web Speech API not supported in this browser. Use Chrome/Edge/Safari.");
-    }
+    telemetryRef.current = telemetry;
   }, [telemetry]);
 
-  // Process live spoken text commands & trigger state changes + voice response
-  const processVoiceCommand = (commandText) => {
-    const lower = commandText.toLowerCase();
-    let responseText = "";
-
-    // Helper functions to clear auto-mode lock if present in telemetry actions
-    const disableLightAuto = () => telemetry?.actions?.setLightAuto && telemetry.actions.setLightAuto(false);
-    const disableFanAuto = () => telemetry?.actions?.setFanAuto && telemetry.actions.setFanAuto(false);
-
-    // 1. Audio / Music Controls
-    if (lower.includes("music") || lower.includes("play") || lower.includes("song")) {
-      setIsPlaying(true);
-      responseText = "Playing smart home audio playlist.";
-    } else if (lower.includes("pause") || lower.includes("stop music")) {
-      setIsPlaying(false);
-      responseText = "Audio playback paused.";
-    } 
-    
-    // 2. Weather Query
-    else if (lower.includes("weather") || lower.includes("temperature") || lower.includes("climate")) {
-      responseText = `Current temperature is ${temp} degrees Celsius. Forecast is ${weatherAI.forecast}.`;
-    } 
-    
-    // 3. Living Room Light Control
-    else if (lower.includes("light") || lower.includes("lamp") || lower.includes("bulb")) {
-      if (lower.includes("on") || lower.includes("enable") || lower.includes("start")) {
-        disableLightAuto();
-        telemetry?.actions?.setManualLight(true);
-        responseText = "Turning on living room light.";
-      } else if (lower.includes("off") || lower.includes("disable") || lower.includes("stop")) {
-        disableLightAuto();
-        telemetry?.actions?.setManualLight(false);
-        responseText = "Turning off living room light.";
-      } else {
-        responseText = "Unclear light instruction. Please say 'turn on light' or 'turn off light'.";
-      }
-    } 
-    
-    // 4. Ceiling Fan Control
-    else if (lower.includes("fan") || lower.includes("cooler") || lower.includes("vent")) {
-      if (lower.includes("on") || lower.includes("enable") || lower.includes("start")) {
-        disableFanAuto();
-        telemetry?.actions?.setManualFan(true);
-        responseText = "Turning on ceiling fan.";
-      } else if (lower.includes("off") || lower.includes("disable") || lower.includes("stop")) {
-        disableFanAuto();
-        telemetry?.actions?.setManualFan(false);
-        responseText = "Turning off ceiling fan.";
-      } else {
-        responseText = "Unclear fan instruction. Please say 'turn on fan' or 'turn off fan'.";
-      }
-    } 
-    
-    // Fallback response for unhandled commands
-    else {
-      responseText = `Received command: "${commandText}". Command not recognized by local rule parser.`;
-    }
-
-    setAssistantResponse(responseText);
-    speakText(responseText);
-  };
-
-  // Speak response out loud using Laptop Speaker (SpeechSynthesis)
-  const speakText = (text) => {
+  const speakFeedback = useCallback((text) => {
+    setAssistantReply(text);
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
       const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+      utterance.rate = 1.05;
       window.speechSynthesis.speak(utterance);
     }
-  };
+  }, []);
 
-  const startListening = () => {
-    if (recognitionInstance) {
-      try {
-        recognitionInstance.start();
-      } catch (err) {
-        recognitionInstance.stop();
+  const processVoiceCommand = useCallback(
+    (rawText) => {
+      const cmd = rawText.toLowerCase().trim();
+      if (!cmd) return;
+
+      let response = "";
+      const current = telemetryRef.current;
+
+      if (
+        (cmd.includes("turn on") ||
+          cmd.includes("switch on") ||
+          cmd.includes("enable") ||
+          cmd.includes("lights on") ||
+          cmd.includes("led on")) &&
+        (cmd.includes("light") || cmd.includes("led") || cmd.includes("lamp"))
+      ) {
+        onSetLed(true);
+        response = "Turning on the STM32 LED and switching to manual mode.";
+      } else if (
+        (cmd.includes("turn off") ||
+          cmd.includes("switch off") ||
+          cmd.includes("disable") ||
+          cmd.includes("lights off") ||
+          cmd.includes("led off")) &&
+        (cmd.includes("light") || cmd.includes("led") || cmd.includes("lamp"))
+      ) {
+        onSetLed(false);
+        response = "Turning off the STM32 LED.";
+      } else if (cmd.includes("auto mode") || cmd.includes("automatic")) {
+        onSetMode("AUTO");
+        response =
+          "Switched to automatic context-aware mode. STM32 will control lighting based on motion and ambient light.";
+      } else if (cmd.includes("manual mode") || cmd.includes("manual")) {
+        onSetMode("MANUAL");
+        response = "Switched to manual override mode.";
+      } else if (
+        cmd.includes("status") ||
+        cmd.includes("report") ||
+        cmd.includes("sensor") ||
+        cmd.includes("room")
+      ) {
+        const motionStr = current.motion
+          ? "motion is detected"
+          : "no motion detected";
+        const ledStr = current.led ? "on" : "off";
+        response = `Room report: ${motionStr}, ambient light level is ${current.light}, and the main LED is ${ledStr} in ${current.mode} mode.`;
+      } else {
+        response = `Heard "${rawText}", but didn't match a command. Try "Turn on light", "Turn off light", "Auto mode", or "Status report".`;
       }
+
+      speakFeedback(response);
+      setCommandHistory((prev) => [
+        {
+          id: Date.now(),
+          command: rawText,
+          reply: response,
+          time: new Date().toLocaleTimeString(),
+        },
+        ...prev.slice(0, 4),
+      ]);
+    },
+    [onSetLed, onSetMode, speakFeedback]
+  );
+
+  useEffect(() => {
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      setSupported(false);
+      return undefined;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = continuousMode;
+
+    recognition.onstart = () => setIsListening(true);
+
+    recognition.onresult = (event) => {
+      let interim = "";
+      let finalChunk = "";
+
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const txt = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalChunk += txt;
+        } else {
+          interim += txt;
+        }
+      }
+
+      setTranscript(finalChunk || interim);
+      if (finalChunk) {
+        processVoiceCommand(finalChunk);
+      }
+    };
+
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+
+    recognitionRef.current = recognition;
+
+    return () => {
+      recognition.stop();
+    };
+  }, [continuousMode, processVoiceCommand]);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) return;
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      setTranscript("");
+      recognitionRef.current.start();
     }
   };
 
   return (
-    <Panel title="Live Voice Assistant & Smart Speaker" icon={<Sparkles className="h-4 w-4 text-cyan-400" />}>
-      <div className="space-y-4">
-        
-        {/* Live Mic Controls */}
-        <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className={`flex h-9 w-9 items-center justify-center rounded-full ${isListening ? "bg-red-500/20 text-red-400 animate-pulse ring-1 ring-red-500/50" : "bg-cyan-500/10 text-cyan-400"}`}>
-                {isListening ? <Mic className="h-4.5 w-4.5" /> : <MicOff className="h-4.5 w-4.5" />}
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-200">Laptop Microphone Input</p>
-                <p className="text-[11px] text-slate-400">{isListening ? "Listening... Speak now!" : "Click button to speak"}</p>
-              </div>
-            </div>
-
-            <button
-              onClick={startListening}
-              disabled={isListening}
-              className="rounded bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-cyan-500 disabled:opacity-50"
-            >
-              {isListening ? "Listening..." : "Start Voice Input"}
-            </button>
+    <Card className="flex flex-col justify-between gap-5 border-indigo-500/30">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-white">
+              Voice Assistant Control
+            </h2>
+            <Badge variant={isListening ? "success" : "neutral"}>
+              {isListening ? "Listening..." : "Standby"}
+            </Badge>
           </div>
-
-          <div className="mt-3 rounded bg-slate-950/80 p-2.5 font-mono text-[11px]">
-            <p className="text-slate-400"><span className="text-slate-500">Heard:</span> {transcript}</p>
-            <p className="mt-1 text-cyan-400"><span className="text-slate-500">Response:</span> {assistantResponse}</p>
-          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Hands-free voice dispatch to ESP32-C3 & STM32
+          </p>
         </div>
 
-        {/* Smart Speaker Output */}
-        <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3.5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Music className="h-4 w-4 text-emerald-400" />
-              <div>
-                <p className="text-xs font-semibold text-slate-200">Smart Speaker Audio Output</p>
-                <p className="text-[11px] text-slate-400">{currentTrack}</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30"
-              >
-                {isPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 ml-0.5" />}
-              </button>
-              <button
-                onClick={() => setCurrentTrack("Lo-Fi Study Beats")}
-                className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-800 text-slate-400 hover:bg-slate-700"
-              >
-                <SkipForward className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </div>
-        </div>
-
-        {/* Weather AI */}
-        <div className="rounded-lg border border-slate-800 bg-slate-900/60 p-3.5">
-          <div className="flex items-center gap-2 text-xs font-semibold text-amber-400">
-            <CloudSun className="h-4 w-4" />
-            <span>AI Predictive Weather Engine</span>
-          </div>
-          <div className="mt-2 space-y-1 text-[11px]">
-            <div className="flex justify-between text-slate-300">
-              <span>Predicted Forecast:</span>
-              <span className="font-semibold text-slate-100">{weatherAI.forecast}</span>
-            </div>
-            <p className="text-slate-400"><span className="text-slate-500">Action:</span> {weatherAI.action}</p>
-          </div>
-        </div>
-
+        <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={continuousMode}
+            onChange={(e) => setContinuousMode(e.target.checked)}
+            className="rounded border-slate-700 bg-slate-800 text-indigo-500 focus:ring-indigo-500"
+          />
+          Continuous Mic
+        </label>
       </div>
-    </Panel>
+
+      {!supported ? (
+        <div className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+          Web Speech API is not supported in this browser. Use Chromium, Chrome,
+          or Edge, or click the quick command buttons below.
+        </div>
+      ) : (
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 bg-slate-950/70 p-4 rounded-xl border border-slate-800">
+          <button
+            onClick={toggleListening}
+            className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 transition-all cursor-pointer mx-auto sm:mx-0 ${
+              isListening
+                ? "bg-rose-600 text-white shadow-lg shadow-rose-600/40 animate-pulse"
+                : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/30"
+            }`}
+            title={isListening ? "Stop Listening" : "Start Voice Command"}
+          >
+            <svg
+              className="w-6 h-6"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"
+              />
+            </svg>
+          </button>
+
+          <div className="flex-1 min-w-0 text-center sm:text-left">
+            <div className="text-xs uppercase tracking-wider text-slate-500 font-semibold">
+              {isListening ? "Live Transcript" : "Assistant Response"}
+            </div>
+            <p className="text-sm text-slate-200 font-medium mt-1 wrap-anywhere">
+              {transcript ? `"${transcript}"` : assistantReply}
+            </p>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <span className="text-xs text-slate-400 block mb-2">
+          Quick Voice Macros:
+        </span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {[
+            "Turn on light",
+            "Turn off light",
+            "Auto mode",
+            "Status report",
+          ].map((preset) => (
+            <ActionButton
+              key={preset}
+              onClick={() => processVoiceCommand(preset)}
+              className="text-xs py-2"
+            >
+              &ldquo;{preset}&rdquo;
+            </ActionButton>
+          ))}
+        </div>
+      </div>
+
+      {commandHistory.length > 0 && (
+        <div className="border-t border-slate-800/80 pt-3">
+          <span className="text-xs font-medium text-slate-400 block mb-2">
+            Recent Voice Logs
+          </span>
+          <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
+            {commandHistory.map((item) => (
+              <div
+                key={item.id}
+                className="text-xs flex items-center justify-between gap-2 bg-slate-950/50 px-3 py-1.5 rounded-lg border border-slate-800/60"
+              >
+                <span className="text-indigo-300 font-medium truncate">
+                  &ldquo;{item.command}&rdquo;
+                </span>
+                <span className="text-slate-500 shrink-0">{item.time}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
